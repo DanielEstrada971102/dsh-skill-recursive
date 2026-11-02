@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Recursive Skill Discovery",
+    "description": "Finds SKILL.md files in subfolders of .dsh/skills, .agents/skills, and ~/.dsh/skills, not just the first level."
+  }
+}

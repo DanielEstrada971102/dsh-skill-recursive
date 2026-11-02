@@ -1,0 +1,4 @@
+- insert:
+    - id: skill-recursive
+      name: dsh-skill-recursive
+      config: {}

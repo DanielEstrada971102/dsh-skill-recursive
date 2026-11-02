@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Descubrimiento recursivo de skills",
+    "description": "Encuentra archivos SKILL.md en subcarpetas de .dsh/skills, .agents/skills y ~/.dsh/skills, no solo en el primer nivel."
+  }
+}
