@@ -1,6 +1,6 @@
 {
   "name": "dsh-skill-recursive",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "DeepSeek Harness plugin: discover SKILL.md files in nested subfolders of .dsh/skills, .agents/skills, and the user skill roots, not just the first directory level.",
   "keywords": [
     "dsh-plugin",
@@ -41,7 +41,7 @@
   },
   "scripts": {
     "check": "node --check index.js",
-    "test": "node --check index.js && node --test tests"
+    "test": "node --check index.js && node --test tests/discovery.test.mjs tests/watcher.test.mjs"
   },
   "dsh": {
     "bundle": {

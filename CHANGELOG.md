@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1 - 2026-11-02
+
+- Fix the `test` script for Node 22: list the test files explicitly instead of passing the `tests` directory, which Node 22 resolves as a module path. No runtime behavior change.
+
 ## 0.1.0 - 2026-11-02
 
 - Initial public release.
