@@ -1,33 +1,21 @@
 /**
- * Recursive skill discovery for the DeepSeek Harness.
+ * Recursive skill discovery for DeepSeek Harness: adds nested `SKILL.md`
+ * bundles (depth >= `minDepth`) to the skill catalog, leaving depth-1
+ * discovery to the built-in provider.
  *
- * The shipped `skill-filesystem` provider lists exactly one directory level of
- * each skill root, so `skills/<container>/<skill>/SKILL.md` is never found.
- * This host plugin registers a second `ctx.skills` provider that contributes
- * only nested bundles (depth >= `minDepth`), leaving the built-in provider's
- * depth-1 results untouched and letting the registry's rank ordering decide
- * same-name duplicates.
- *
- * The provider is dependency-free on purpose: profile-installed bundles may
- * not resolve the Harness installation's node_modules, so discovery, YAML
- * frontmatter parsing, and change watching use Node built-ins only.
- *
- * @module @local/dsh-skill-recursive
+ * @module dsh-skill-recursive
  */
 
 import { watch } from 'node:fs'
 import { readdir, readFile, realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
+import z from '@deepseek-ai/schemastery'
 
 export const name = 'skill-recursive'
 export const inject = ['skills']
 
-/**
- * Root ranks. Each is one step below the shipped `skill-filesystem` rank for
- * the same root, so a flat skill always wins a name collision while nested
- * bundles still outrank less-specific roots.
- */
+/** Ranks sit one step below the shipped filesystem provider, so flat skills win collisions. */
 const RANKS = {
   'project-dsh': 110,
   'project-agents': 210,
@@ -53,17 +41,34 @@ const DEFAULTS = {
 }
 
 /**
+ * Settings schema. Volatile fields are the only ones DSH exposes in the
+ * Settings form and the ones the Loader can refresh in place.
+ */
+export const Config = z.object({
+  minDepth: z.natural().min(1).default(DEFAULTS.minDepth).description('First folder level that may contain a skill.').volatile(),
+  maxDepth: z.natural().min(1).default(DEFAULTS.maxDepth).description('Deepest folder level that is scanned.').volatile(),
+  watch: z.boolean().default(DEFAULTS.watch).description('Refresh the catalog when skill files change.').volatile(),
+  debounceMs: z.natural().default(DEFAULTS.debounceMs).description('Debounce for watcher invalidations.').volatile(),
+  pollIntervalMs: z.natural().min(250).default(DEFAULTS.pollIntervalMs).description('Fallback polling interval.').volatile(),
+  includeProjectRoots: z.boolean().default(DEFAULTS.includeProjectRoots).description('Scan project .dsh/skills and .agents/skills.').volatile(),
+  includeUserRoots: z.boolean().default(DEFAULTS.includeUserRoots).description('Scan user-level skill roots.').volatile(),
+  followSymlinks: z.boolean().default(DEFAULTS.followSymlinks).description('Follow symlinked folders.').volatile(),
+  extraRoots: z.array(z.string().min(1)).default([...DEFAULTS.extraRoots]).description('Additional skill roots.').volatile(),
+  ignoreDirs: z.array(z.string().min(1)).default([...DEFAULTS.ignoreDirs]).description('Folder names never scanned.').volatile(),
+})
+
+/**
  * Register the recursive skill provider on the host `skills` registry.
  * @param ctx - plugin context carrying the `skills` service.
  * @param config - optional row config; see {@link normalizeConfig}.
  */
 export function apply(ctx, config) {
-  const options = normalizeConfig(ctx, config)
   let provider
   ctx.skills.registerProvider((control) => {
-    provider = new RecursiveSkillProvider(ctx, control, options)
+    provider = new RecursiveSkillProvider(ctx, control, config)
     return provider
   })
+  ctx.on('settings/document-updated', () => provider?.syncOptions())
   ctx.effect(function* () {
     yield async () => {
       await provider?.dispose()
@@ -76,13 +81,14 @@ class RecursiveSkillProvider {
   /**
    * @param ctx - plugin context.
    * @param control - registry registration control.
-   * @param options - normalized plugin options.
+   * @param config - raw row config, including Loader volatile references.
    */
-  constructor(ctx, control, options) {
+  constructor(ctx, control, config) {
     this.ctx = ctx
     this.name = name
     this.control = control
-    this.options = options
+    this.config = config
+    this.options = normalizeConfig(ctx, config)
     this.watchers = new Map()
     this.pendingInvalidation = undefined
     this.disposed = false
@@ -97,6 +103,7 @@ class RecursiveSkillProvider {
    * @returns candidates, or an incomplete observation when a scan failed.
    */
   async list(options = {}) {
+    this.syncOptions()
     const roots = await this.roots(options.cwd)
     this.observeRoots(roots)
     const candidates = []
@@ -107,6 +114,26 @@ class RecursiveSkillProvider {
       for (const candidate of scan.candidates) candidates.push(candidate)
     }
     return complete ? candidates : { candidates, complete }
+  }
+
+  /** Pick up Settings changes; the Loader updates volatile refs in place. */
+  syncOptions() {
+    if (this.disposed) return
+    let next
+    try {
+      next = normalizeConfig(this.ctx, this.config)
+    } catch (error) {
+      this.ctx.logger.warn(`skill-recursive: ignoring invalid settings: ${errorMessage(error)}`)
+      return
+    }
+    if (sameOptions(next, this.options)) return
+    this.options = next
+    if (this.pendingInvalidation !== undefined) {
+      clearTimeout(this.pendingInvalidation)
+      this.pendingInvalidation = undefined
+    }
+    this.closeWatchers()
+    this.control.invalidate()
   }
 
   /**
@@ -249,6 +276,11 @@ class RecursiveSkillProvider {
       clearTimeout(this.pendingInvalidation)
       this.pendingInvalidation = undefined
     }
+    this.closeWatchers()
+  }
+
+  /** Close watcher handles and polling timers; the next listing opens fresh ones. */
+  closeWatchers() {
     for (const watcher of this.watchers.values()) {
       watcher.closed = true
       watcher.handle?.close()
@@ -687,24 +719,49 @@ function isIgnored(name, options) {
  * @returns normalized options.
  */
 function normalizeConfig(ctx, raw) {
-  if (raw === undefined || raw === null) raw = {}
-  if (typeof raw !== 'object' || Array.isArray(raw)) throw new TypeError('skill-recursive: config must be an object')
+  const root = unwrap(raw) ?? {}
+  if (typeof root !== 'object' || Array.isArray(root)) throw new TypeError('skill-recursive: config must be an object')
   const known = new Set(Object.keys(DEFAULTS))
-  for (const key of Object.keys(raw)) {
+  for (const key of Object.keys(root)) {
     if (!known.has(key)) ctx.logger.warn(`skill-recursive: unknown config key "${key}" ignored`)
   }
+  const value = (key) => unwrap(root[key])
   const options = { ...DEFAULTS }
-  options.minDepth = positiveInteger('minDepth', raw.minDepth ?? DEFAULTS.minDepth, 1)
-  options.maxDepth = positiveInteger('maxDepth', raw.maxDepth ?? DEFAULTS.maxDepth, options.minDepth)
-  options.debounceMs = nonNegativeInteger('debounceMs', raw.debounceMs ?? DEFAULTS.debounceMs)
-  options.pollIntervalMs = positiveInteger('pollIntervalMs', raw.pollIntervalMs ?? DEFAULTS.pollIntervalMs, 250)
-  options.watch = booleanOption('watch', raw.watch ?? DEFAULTS.watch)
-  options.includeProjectRoots = booleanOption('includeProjectRoots', raw.includeProjectRoots ?? DEFAULTS.includeProjectRoots)
-  options.includeUserRoots = booleanOption('includeUserRoots', raw.includeUserRoots ?? DEFAULTS.includeUserRoots)
-  options.followSymlinks = booleanOption('followSymlinks', raw.followSymlinks ?? DEFAULTS.followSymlinks)
-  options.extraRoots = stringArray('extraRoots', raw.extraRoots ?? DEFAULTS.extraRoots).map((path) => resolve(path))
-  options.ignoreDirs = stringArray('ignoreDirs', raw.ignoreDirs ?? DEFAULTS.ignoreDirs)
+  options.minDepth = positiveInteger('minDepth', value('minDepth') ?? DEFAULTS.minDepth, 1)
+  options.maxDepth = positiveInteger('maxDepth', value('maxDepth') ?? DEFAULTS.maxDepth, options.minDepth)
+  options.debounceMs = nonNegativeInteger('debounceMs', value('debounceMs') ?? DEFAULTS.debounceMs)
+  options.pollIntervalMs = positiveInteger('pollIntervalMs', value('pollIntervalMs') ?? DEFAULTS.pollIntervalMs, 250)
+  options.watch = booleanOption('watch', value('watch') ?? DEFAULTS.watch)
+  options.includeProjectRoots = booleanOption('includeProjectRoots', value('includeProjectRoots') ?? DEFAULTS.includeProjectRoots)
+  options.includeUserRoots = booleanOption('includeUserRoots', value('includeUserRoots') ?? DEFAULTS.includeUserRoots)
+  options.followSymlinks = booleanOption('followSymlinks', value('followSymlinks') ?? DEFAULTS.followSymlinks)
+  options.extraRoots = stringArray('extraRoots', value('extraRoots') ?? DEFAULTS.extraRoots).map((path) => resolve(path))
+  options.ignoreDirs = stringArray('ignoreDirs', value('ignoreDirs') ?? DEFAULTS.ignoreDirs)
   return options
+}
+
+/** Read a Loader volatile reference, or return a plain value. */
+function unwrap(value) {
+  return value !== null && typeof value === 'object' && typeof value.get === 'function' ? value.get() : value
+}
+
+/** Whether two normalized option sets describe the same behavior. */
+function sameOptions(a, b) {
+  return a.minDepth === b.minDepth
+    && a.maxDepth === b.maxDepth
+    && a.watch === b.watch
+    && a.debounceMs === b.debounceMs
+    && a.pollIntervalMs === b.pollIntervalMs
+    && a.includeProjectRoots === b.includeProjectRoots
+    && a.includeUserRoots === b.includeUserRoots
+    && a.followSymlinks === b.followSymlinks
+    && sameList(a.extraRoots, b.extraRoots)
+    && sameList(a.ignoreDirs, b.ignoreDirs)
+}
+
+/** Whether two string arrays are equal. */
+function sameList(a, b) {
+  return a.length === b.length && a.every((value, index) => value === b[index])
 }
 
 /**

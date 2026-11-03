@@ -1,6 +1,6 @@
 {
   "name": "dsh-skill-recursive",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "DeepSeek Harness plugin: discover SKILL.md files in nested subfolders of .dsh/skills, .agents/skills, and the user skill roots, not just the first directory level.",
   "keywords": [
     "dsh-plugin",
@@ -24,12 +24,14 @@
   "main": "index.js",
   "exports": {
     ".": "./index.js",
+    "./client": "./client.js",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg",
     "./package.json": "./package.json"
   },
   "files": [
     "index.js",
+    "client.js",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
@@ -40,12 +42,19 @@
     "node": ">=20"
   },
   "scripts": {
-    "check": "node --check index.js",
-    "test": "node --check index.js && node --test tests/discovery.test.mjs tests/watcher.test.mjs"
+    "check": "node --check index.js && node --check client.js",
+    "test": "node --check index.js && node --check client.js && node --test tests/discovery.test.mjs tests/watcher.test.mjs tests/settings.test.mjs"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "~3.18.5"
   },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": []
     },
     "compatibility": {
       "node": ">=20",

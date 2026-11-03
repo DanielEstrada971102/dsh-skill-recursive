@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0 - 2026-11-03
+
+- Add a Web settings page under Settings → Plugins for every option.
+- Export a schemastery `Config` schema; volatile fields apply live when saved.
+- Verify the bundle in both the `desktop` and `web` profiles.
+- Trim the README and code comments; add a settings regression test.
+
 ## 0.1.1 - 2026-11-02
 
 - Fix the `test` script for Node 22: list the test files explicitly instead of passing the `tests` directory, which Node 22 resolves as a module path. No runtime behavior change.

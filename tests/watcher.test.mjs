@@ -47,6 +47,9 @@ test('a nested skill edit invalidates the catalog, and dispose stops watching', 
       let step = iterator.next()
       while (!step.done) step = iterator.next()
     },
+    on() {
+      return () => {}
+    },
   }
 
   apply(ctx, {

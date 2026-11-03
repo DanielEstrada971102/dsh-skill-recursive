@@ -1,59 +1,45 @@
 # dsh-skill-recursive
 
-A DeepSeek Harness plugin that finds `SKILL.md` files in **nested** subfolders of the standard skill roots — not only the first directory level.
+Recursive `SKILL.md` discovery for DeepSeek Harness. The built-in provider reads one directory level per skill root; this plugin adds skills stored in nested folders.
 
 ```
 .dsh/skills/
-├── flat-skill/SKILL.md            ← already found by the built-in provider
+├── flat-skill/SKILL.md            ← built-in provider
 └── obsidian-skills/               ← container folder
-    ├── defuddle/SKILL.md          ← found by this plugin
-    └── json-canvas/SKILL.md       ← found by this plugin
+    ├── defuddle/SKILL.md          ← this plugin
+    └── json-canvas/SKILL.md       ← this plugin
 ```
-
-Without it, the second group never reaches the skill catalog, because the shipped `@deepseek-ai/dsh-skill-filesystem` provider reads exactly one directory level per root (`readdir` of the root, then `<root>/<name>/SKILL.md`) and watches with chokidar `depth: 1`.
 
 ## Install
 
-The package is a standard DSH bundle (`dsh.bundle.patch`), so it installs into a profile like any other plugin. Requires Node.js 20 or newer.
+The plugin is a normal DSH bundle and works in both the Desktop app (`desktop` profile) and a browser-hosted harness (`web` profile). A profile only loads what is installed in it.
 
-### Through the agent (recommended)
+### Desktop app
 
-Ask a Harness session to install it:
+Use the in-app plugin manager, or ask a Harness session to install it:
 
 ```
-plugin_manager action=install_bundle target=github:DanielEstrada971102/dsh-skill-recursive
+plugin_manager action=install_bundle target=github:DanielEstrada971102/dsh-skill-recursive#v0.2.0
 ```
 
-The plugin manager links the package into the active profile, applies the patch row, and hot-applies the change. No restart is normally needed.
-
-### Through the CLI
+### Web profile
 
 ```sh
-dsh plugin --profile <profile> add github:DanielEstrada971102/dsh-skill-recursive
+dsh plugin --profile web add github:DanielEstrada971102/dsh-skill-recursive#v0.2.0
 ```
 
-On DSH Desktop use the in-app plugin manager instead: the Desktop profile is managed by the app, and a CLI install against a different profile will not show up there.
-
-### From a local clone
+### Local clone
 
 ```sh
 git clone https://github.com/DanielEstrada971102/dsh-skill-recursive.git
-# then, in the Harness: plugin_manager action=install_bundle target=<absolute path to the clone>
+dsh plugin --profile <profile> add link:<absolute path to the clone>
 ```
 
-## What it does
+Restart the host after installing or updating a bundle.
 
-- **Roots** — project `.dsh/skills` and `.agents/skills` (nearest `.git` ancestor of the session cwd), `$DSH_HOME/skills` (default `~/.dsh/skills`), `$DSH_AGENTS_HOME/skills` (default `~/.agents/skills`), plus any `extraRoots`.
-- **Recursive scan** — walks each root to `maxDepth`, skipping `ignoreDirs` (`.system`, `node_modules`, `.git` by default).
-- **Depth guard** — managed by `minDepth: 2`: the plugin contributes only nested bundles, so the built-in provider keeps ownership of depth-1 skills and no duplicate-name warnings are produced.
-- **Precedence** — nested candidates rank one step below the matching flat root (project 110/210, custom 310, user 410/510), so a same-name flat skill always wins.
-- **Frontmatter** — reads the same fields as the built-in provider: `name`, `description`, optional `whenToUse`, `disable-model-invocation`, `user-invocable`. Invalid files are logged and skipped.
-- **Hot refresh** — a recursive `fs.watch` per root invalidates the skill catalog; where recursive watching is unavailable it falls back to polling `mtime`/size.
-- **Zero dependencies** — Node built-ins only. Profile-installed bundles may not resolve the Harness installation's `node_modules`, so the YAML frontmatter subset parser and discovery walk are self-contained.
+## Configure
 
-## Configuration
-
-Every field is optional and validated at activation; an invalid value throws instead of being silently ignored.
+Open **Settings → Plugins → Recursive Skill Discovery**. The bundle's page renders the configuration form; changes are saved by DSH and applied without restarting.
 
 | Field | Default | Meaning |
 |---|---|---|
@@ -65,10 +51,10 @@ Every field is optional and validated at activation; an invalid value throws ins
 | `includeProjectRoots` | `true` | Scan project `.dsh/skills` and `.agents/skills`. |
 | `includeUserRoots` | `true` | Scan user-level skill roots. |
 | `followSymlinks` | `false` | Follow symlinked directories (loop-guarded). |
-| `extraRoots` | `[]` | Additional roots; relative paths resolve against the process cwd. |
+| `extraRoots` | `[]` | Additional roots; use absolute paths. |
 | `ignoreDirs` | `[".system","node_modules",".git"]` | Directory names never descended into. |
 
-Example row config:
+The profile patch still works for deployment defaults:
 
 ```yaml
 - insert:
@@ -80,20 +66,27 @@ Example row config:
           - C:/shared/skills
 ```
 
+## What it does
+
+- **Roots** — project `.dsh/skills` and `.agents/skills` (nearest `.git` ancestor of the session cwd), `$DSH_HOME/skills` (default `~/.dsh/skills`), `$DSH_AGENTS_HOME/skills` (default `~/.agents/skills`), plus any `extraRoots`.
+- **Recursive scan** — walks each root to `maxDepth`, skipping `ignoreDirs`.
+- **Depth guard** — contributes only nested bundles at depth 2 or deeper, so the built-in provider keeps ownership of flat skills.
+- **Precedence** — nested candidates rank one step below the matching flat root, so a same-name flat skill wins.
+- **Frontmatter** — reads `name`, `description`, optional `whenToUse`, `disable-model-invocation`, and `user-invocable`; invalid files are logged and skipped.
+- **Hot refresh** — watches roots and invalidates the skill catalog; falls back to polling where recursive watching is unavailable.
+
 ## Compatibility
 
-- Tested with DeepSeek Harness `0.2.1-rc.5`, Node.js 20+.
-- Depends only on the host `skills` service and Node built-ins; no `@deepseek-ai/*` package is imported.
-- Declares `dsh.bundle.patch` and `dsh.compatibility` in `package.json` for the plugin manager and DSH Market.
+- Tested with DeepSeek Harness `0.2.1-rc.5` and Node.js 20+.
+- The settings form is rendered by the same Web client in both the Desktop and Web profiles.
+- Uses DSH's `@deepseek-ai/schemastery` for the settings schema; no other runtime dependency.
 
-## Known limitations
+## Notes
 
-- **Depth-1 ownership** — this plugin deliberately does not register depth-1 skills; it supplements `skill-filesystem` rather than replacing it. If that built-in row is disabled, flat skills will not be discovered by this plugin alone.
-- **Direct filesystem reads** — skill files are read with `node:fs` from the host process, matching the built-in provider's trusted-host path; filesystem policy hooks do not mediate these reads.
-- **Frontmatter subset** — inline scalars, quoted strings, block scalars (`|`, `>`), and booleans are supported; arbitrary nested YAML structures are not forwarded as metadata.
-- **Ranks** — nested candidates use fixed ranks (110/210/310/410/510) one step below the shipped roots; a future change to those shipped ranks would need this table updated.
-- **Root creation** — a root that does not exist when first observed is retried on the next listing; it becomes watched once it appears.
-- **Watcher lifetime** — one watcher is kept per distinct root path for the process lifetime, so many distinct project roots accumulate watchers until restart.
+- **Depth-1 ownership** — this plugin supplements `skill-filesystem`; if that provider is disabled, flat skills are not discovered by this plugin alone.
+- **Direct filesystem reads** — skill files are read with `node:fs` from the host process, matching the built-in provider.
+- **Frontmatter subset** — plain/quoted scalars, block scalars (`|`, `>`), and booleans are supported; arbitrary nested YAML is not forwarded.
+- **Watchers** — one watcher is kept per distinct root path for the process lifetime.
 
 ## License
 
