@@ -80,22 +80,6 @@ Example row config:
           - C:/shared/skills
 ```
 
-## Verify it works
-
-After installation, the skill catalog should list the nested names (for example `obsidian-bases`), and asking the agent to use one loads it normally. In a session:
-
-```
-Use the obsidian-bases skill.
-```
-
-To re-run the plugin's own checks locally (no dependencies, no install step):
-
-```sh
-npm test
-```
-
-The suite covers depth filtering, ignored directories, invalid frontmatter, config validation, `get()` loading, watcher invalidation, and dispose behavior. CI runs it on Windows and Ubuntu with Node 20 and 22.
-
 ## Compatibility
 
 - Tested with DeepSeek Harness `0.2.1-rc.5`, Node.js 20+.
@@ -110,10 +94,6 @@ The suite covers depth filtering, ignored directories, invalid frontmatter, conf
 - **Ranks** — nested candidates use fixed ranks (110/210/310/410/510) one step below the shipped roots; a future change to those shipped ranks would need this table updated.
 - **Root creation** — a root that does not exist when first observed is retried on the next listing; it becomes watched once it appears.
 - **Watcher lifetime** — one watcher is kept per distinct root path for the process lifetime, so many distinct project roots accumulate watchers until restart.
-
-## Discoverability (DSH Market)
-
-The DSH Market catalog is curated by the [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) registry. To list this plugin there, open a pull request with one entry pointing at this repository. GitHub-only entries are supported; there is no npm publication for this package.
 
 ## License
 
